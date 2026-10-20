@@ -47,6 +47,7 @@ uvtheory = []
 pets = []
 saftvrqmie = []
 saftvrmie = ["association"]
+saftgammamie = ["association"]
 multiparameter = []
 rayon = ["dep:rayon", "ndarray/rayon", "feos-core/rayon", "feos-dft?/rayon"]
 all_models = [
@@ -58,6 +59,7 @@ all_models = [
     "pets",
     "saftvrqmie",
     "saftvrmie",
+    "saftgammamie",
     "multiparameter"
 ]
 

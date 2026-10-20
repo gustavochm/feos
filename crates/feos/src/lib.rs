@@ -52,6 +52,8 @@ pub mod multiparameter;
 pub mod pcsaft;
 #[cfg(feature = "pets")]
 pub mod pets;
+#[cfg(feature = "saftgammamie")]
+pub mod saftgammamie;
 #[cfg(feature = "saftvrmie")]
 pub mod saftvrmie;
 #[cfg(feature = "saftvrqmie")]
