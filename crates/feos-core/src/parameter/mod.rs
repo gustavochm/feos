@@ -666,6 +666,19 @@ impl<P, B, A, Bo> GcParameters<P, B, A, Bo, f64> {
     }
 }
 
+impl<P, B, A, Bo, C> GcParameters<P, B, A, Bo, C> {
+    /// The segment records the parameters were built from.
+    pub fn segment_records(&self) -> &[SegmentRecord<P, A>] {
+        &self.data.1
+    }
+
+    /// The binary segment records the parameters were built from, including records
+    /// of segment pairs within one molecule, which `binary` and `association` omit.
+    pub fn binary_segment_records(&self) -> Option<&[BinarySegmentRecord<B, A>]> {
+        self.data.2.as_deref()
+    }
+}
+
 impl<P: Clone, B: Clone, A: CombiningRule<P> + Clone, Bo: Clone, C: GroupCount + Default>
     GcParameters<P, B, A, Bo, C>
 {
@@ -956,5 +969,91 @@ impl<P: Clone, B: Clone, A: CombiningRule<P> + Clone, Bo: Clone, C: GroupCount +
             bond_records,
         )
         .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Two molecules A (A1, A2) and B (B1) with binary records for the intramolecular
+    /// pair A1-A2 and the intermolecular pair A1-B1, both with an association override.
+    fn two_molecules() -> GcParameters<f64, f64, (), (), f64> {
+        let identifier = |name| Identifier::new(None, Some(name), None, None, None, None);
+        let chemical_records = vec![
+            ChemicalRecord::new(identifier("A"), vec!["A1".into(), "A2".into()], None),
+            ChemicalRecord::new(identifier("B"), vec!["B1".into()], None),
+        ];
+        let site = |na, nb| vec![AssociationRecord::with_id("s".into(), None, na, nb, 0.0)];
+        let segment_records = [
+            SegmentRecord::with_association("A1".into(), 1.0, 1.0, site(1.0, 0.0)),
+            SegmentRecord::with_association("A2".into(), 1.0, 1.0, site(0.0, 1.0)),
+            SegmentRecord::with_association("B1".into(), 1.0, 1.0, site(0.0, 1.0)),
+        ];
+        let over = || vec![BinaryAssociationRecord::with_id("s".into(), "s".into(), ())];
+        let binary_segment_records = [
+            BinarySegmentRecord::with_association("A1".into(), "A2".into(), Some(0.1), over()),
+            BinarySegmentRecord::with_association("A1".into(), "B1".into(), Some(0.2), over()),
+        ];
+        GcParameters::from_segments_hetero(
+            chemical_records,
+            &segment_records,
+            Some(&binary_segment_records),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn binary_segment_records_keep_intramolecular_pairs() {
+        let parameters = two_molecules();
+        // the builder applies only the intermolecular pair A1-B1 ...
+        assert_eq!(parameters.binary.len(), 1);
+        assert_eq!(parameters.binary[0].model_record, 0.2);
+        assert_eq!(parameters.association.binary_ab.len(), 1);
+        // ... the stored records keep both
+        assert_eq!(parameters.segment_records().len(), 3);
+        assert_eq!(parameters.binary_segment_records().unwrap().len(), 2);
+
+        // a subset rebuilds from the stored records, which stay complete
+        let molecule_a = parameters.subset(&[0]);
+        assert!(molecule_a.binary.is_empty());
+        assert!(molecule_a.association.binary_ab.is_empty());
+        let records = molecule_a.binary_segment_records().unwrap();
+        assert!(records.iter().any(|r| r.id1 == "A1" && r.id2 == "A2"));
+    }
+
+    #[test]
+    fn intramolecular_association_override_from_records() {
+        // the sites carry no parameters, so every A-B entry comes from an override
+        let parameters = two_molecules();
+        let index: HashMap<_, _> = parameters
+            .pure
+            .iter()
+            .enumerate()
+            .map(|(i, g)| (g.identifier.as_str(), i))
+            .collect();
+        let segments: HashMap<_, _> = parameters
+            .segment_records()
+            .iter()
+            .map(|s| (s.identifier.as_str(), s))
+            .collect();
+        let sites: Vec<_> = parameters
+            .pure
+            .iter()
+            .map(|g| segments[g.identifier.as_str()].association_sites.clone())
+            .collect();
+        let overrides: Vec<_> = parameters
+            .binary_segment_records()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                let [i, j] = [index[r.id1.as_str()], index[r.id2.as_str()]];
+                BinaryParameters::new(i, j, r.association_sites.clone(), ())
+            })
+            .collect();
+        let association =
+            AssociationParameters::new_hetero(&parameters.pure, &sites, &overrides).unwrap();
+        // donor on A1 with the acceptors on A2 (same molecule) and on B1
+        assert_eq!(association.binary_ab.len(), 2);
     }
 }
