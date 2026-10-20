@@ -52,6 +52,7 @@ uvtheory = ["feos/uvtheory"]
 pets = ["feos/pets"]
 saftvrqmie = ["feos/saftvrqmie"]
 saftvrmie = ["feos/saftvrmie"]
+saftgammamie = ["feos/saftgammamie"]
 multiparameter = ["feos/multiparameter"]
 # All parallelism is gated behind this feature. Not active for emscripten wheel.
 rayon = ["dep:rayon", "ndarray/rayon", "feos-core/rayon", "feos-dft?/rayon"]
@@ -68,6 +69,7 @@ all_models = [
     "pets",
     "saftvrqmie",
     "saftvrmie",
+    "saftgammamie",
     "multiparameter"
 ]
 # Features for native Python wheel, including parallelism.

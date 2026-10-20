@@ -23,6 +23,8 @@ mod multiparameter;
 mod pcsaft;
 #[cfg(feature = "pets")]
 mod pets;
+#[cfg(feature = "saftgammamie")]
+mod saftgammamie;
 #[cfg(feature = "saftvrmie")]
 mod saftvrmie;
 #[cfg(feature = "saftvrqmie")]

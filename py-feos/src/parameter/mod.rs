@@ -594,7 +594,7 @@ impl PyGcParameters {
         .map_err(PyFeosError::from)?)
     }
 
-    #[cfg(feature = "gc_pcsaft")]
+    #[cfg(any(feature = "gc_pcsaft", feature = "saftgammamie"))]
     pub fn try_convert_heterosegmented<P, B, A, C: GroupCount + Default>(
         self,
     ) -> PyResult<GcParameters<P, B, A, (), C>>

@@ -49,6 +49,10 @@ pub enum ResidualModel {
     #[implement(molar_weight, parameter_info)]
     SaftVRMie(feos::saftvrmie::SaftVRMie),
 
+    #[cfg(feature = "saftgammamie")]
+    #[implement(molar_weight)]
+    SaftGammaMie(feos::saftgammamie::SaftGammaMie),
+
     #[cfg(feature = "pets")]
     #[implement(molar_weight, parameter_info)]
     Pets(feos::pets::Pets),
