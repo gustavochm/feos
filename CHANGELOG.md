@@ -5,9 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
-- Added the read-only accessors `GcParameters::segment_records` and `GcParameters::binary_segment_records` (shared code in `feos-core`; needed by SAFT-γ Mie for unlike group pairs within a molecule, which `binary` and `association` omit).
-
 ### Fixed
 - Fixed bug in `_density_iteration` which used the residual Helmholtz energy as the pressure and the pressure as derivative. [#396](https://github.com/feos-org/feos/pull/396)
 
