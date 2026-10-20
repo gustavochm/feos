@@ -148,11 +148,15 @@ pub struct SaftGammaMiePars {
     pub lr: DVector<f64>,
     pub la: DVector<f64>,
     pub sigma_kl: DMatrix<f64>,
+    /// σ_kl³, used by the packing fraction ζ̄_x, the association kernel and σ̄_ii³
+    pub sigma3_kl: DMatrix<f64>,
     pub epsilon_k_kl: DMatrix<f64>,
     pub lr_kl: DMatrix<f64>,
     pub la_kl: DMatrix<f64>,
     pub c_kl: DMatrix<f64>,
     pub alpha_kl: DMatrix<f64>,
+    /// Groups of each component
+    pub component_groups: Vec<Vec<usize>>,
     /// Segment number of each component, Σ_k m_k,i
     pub m_i: DVector<f64>,
     /// Molecular averages (Haslam et al. (2020), Eq. 14-18)
@@ -247,26 +251,29 @@ impl SaftGammaMiePars {
             }
         }
 
-        // molecular averages with the weights z_k,i = m_k,i / m_i (Haslam et al. (2020), Eq. 14-18)
-        let mut m_i: DVector<f64> = DVector::zeros(n_comp);
+        let sigma3_kl = sigma_kl.map(|s| s.powi(3));
+        let mut component_groups = vec![Vec::new(); n_comp];
         for k in 0..n {
-            m_i[component_index[k]] += m[k];
+            component_groups[component_index[k]].push(k);
         }
+
+        // molecular averages with the weights z_k,i = m_k,i / m_i (Haslam et al. (2020), Eq. 14-18)
+        let m_i = DVector::from_fn(n_comp, |i, _| {
+            component_groups[i].iter().map(|&k| m[k]).sum()
+        });
         let mut sigma3_bar: DVector<f64> = DVector::zeros(n_comp);
         let mut epsilon_k_bar: DVector<f64> = DVector::zeros(n_comp);
         let mut lr_bar = DVector::zeros(n_comp);
         let mut la_bar = DVector::zeros(n_comp);
-        for k in 0..n {
-            for l in 0..n {
-                let i = component_index[k];
-                if component_index[l] != i {
-                    continue;
+        for (i, groups) in component_groups.iter().enumerate() {
+            for &k in groups {
+                for &l in groups {
+                    let zz = m[k] * m[l] / (m_i[i] * m_i[i]);
+                    sigma3_bar[i] += zz * sigma3_kl[(k, l)];
+                    epsilon_k_bar[i] += zz * epsilon_k_kl[(k, l)];
+                    lr_bar[i] += zz * lr_kl[(k, l)];
+                    la_bar[i] += zz * la_kl[(k, l)];
                 }
-                let zz = m[k] * m[l] / (m_i[i] * m_i[i]);
-                sigma3_bar[i] += zz * sigma_kl[(k, l)].powi(3);
-                epsilon_k_bar[i] += zz * epsilon_k_kl[(k, l)];
-                lr_bar[i] += zz * lr_kl[(k, l)];
-                la_bar[i] += zz * la_kl[(k, l)];
             }
         }
         let sigma_bar = sigma3_bar.map(f64::cbrt);
@@ -290,11 +297,13 @@ impl SaftGammaMiePars {
             lr,
             la,
             sigma_kl,
+            sigma3_kl,
             epsilon_k_kl,
             lr_kl,
             la_kl,
             c_kl,
             alpha_kl,
+            component_groups,
             m_i,
             sigma3_bar,
             sigma_bar,

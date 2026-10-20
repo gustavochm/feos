@@ -1,8 +1,9 @@
 //! Monomer (dispersion) and chain contributions of SAFT-γ Mie.
 //!
 //! The structure and the kernels (`zeta_eff`, `a1s_ij`, `b_ij`, `a1s_b_ij`, `f`, `PHI`, `C`) are
-//! copied from `saftvrmie::eos::dispersion`; sums run over the groups of all molecules (monomer)
-//! and over the molecular averages (chain), Haslam et al. (2020), Eq. 6-20.
+//! copied from `saftvrmie::eos::dispersion`, with the powers of x0 shared within a pair (see
+//! `a1s_b_terms`); sums run over the groups of all molecules (monomer) and over the molecular
+//! averages (chain), Haslam et al. (2020), Eq. 6-20.
 use crate::saftgammamie::parameters::SaftGammaMiePars;
 use feos_core::StateHD;
 use nalgebra::{DMatrix, DVector};
@@ -58,10 +59,10 @@ impl<D: DualNum<f64> + Copy + Zero> Properties<D> {
         let mut zeta_x_bar = D::zero();
         for k in 0..n {
             zeta_x += xs[k].powi(2) * d3_kl[(k, k)];
-            zeta_x_bar += xs[k].powi(2) * parameters.sigma_kl[(k, k)].powi(3);
+            zeta_x_bar += xs[k].powi(2) * parameters.sigma3_kl[(k, k)];
             for l in k + 1..n {
                 zeta_x += xs[k] * xs[l] * d3_kl[(k, l)] * 2.0;
-                zeta_x_bar += xs[k] * xs[l] * parameters.sigma_kl[(k, l)].powi(3) * 2.0;
+                zeta_x_bar += xs[k] * xs[l] * parameters.sigma3_kl[(k, l)] * 2.0;
             }
         }
         zeta_x *= segment_density * FRAC_PI_6;
@@ -145,11 +146,8 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
         let d3 = di.powi(3);
         let x0 = di.recip() * sig;
         let pref = properties.segment_density * d3 * eps_k * 2.0 * PI * c;
-        let a1s_b_la = a1s_b_ij(zeta_x, x0, la);
-        let a1s_b_lr = a1s_b_ij(zeta_x, x0, lr);
-        let a1s_b_2la = a1s_b_ij(zeta_x, x0, 2.0 * la);
-        let a1s_b_lalr = a1s_b_ij(zeta_x, x0, la + lr);
-        let a1s_b_2lr = a1s_b_ij(zeta_x, x0, 2.0 * lr);
+        let [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr] =
+            a1s_b_terms(zeta_x, x0, la, lr);
         let a1_ii = pref * (a1s_b_la - a1s_b_lr);
         let a2_ii = pref * eps_k * c * k_hs * 0.5 * (a1s_b_2la - a1s_b_lalr * 2.0 + a1s_b_2lr);
 
@@ -180,11 +178,8 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
             let d3 = dij.powi(3);
             let x0 = dij.recip() * sig;
             let pref = properties.segment_density * d3 * eps_k * 2.0 * PI * c;
-            let a1s_b_la = a1s_b_ij(zeta_x, x0, la);
-            let a1s_b_lr = a1s_b_ij(zeta_x, x0, lr);
-            let a1s_b_2la = a1s_b_ij(zeta_x, x0, 2.0 * la);
-            let a1s_b_lalr = a1s_b_ij(zeta_x, x0, la + lr);
-            let a1s_b_2lr = a1s_b_ij(zeta_x, x0, 2.0 * lr);
+            let [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr] =
+                a1s_b_terms(zeta_x, x0, la, lr);
             let a1_ij = pref * (a1s_b_la - a1s_b_lr);
             let a2_ij = pref * eps_k * c * k_hs * 0.5 * (a1s_b_2la - a1s_b_lalr * 2.0 + a1s_b_2lr);
 
@@ -233,8 +228,8 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
         }
         // molecular averages (Eq. 14-18); d̄^3 from the group diameters of molecule i
         let mut d3_bar = D::zero();
-        for k in (0..n).filter(|&k| p.component_index[k] == i) {
-            for l in (0..n).filter(|&l| p.component_index[l] == i) {
+        for &k in &p.component_groups[i] {
+            for &l in &p.component_groups[i] {
                 let d_kl = (properties.diameter[k] + properties.diameter[l]) * 0.5;
                 d3_bar += d_kl.powi(3) * (p.m[k] * p.m[l] / (m * m));
             }
@@ -250,11 +245,8 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
         let d3 = Dual::from_re(d3_bar);
         let x0 = Dual::from_re(d3_bar.recip() * p.sigma3_bar[i]).cbrt();
         let pref = rho_s_dual * d3 * eps_k * 2.0 * PI * c;
-        let a1s_b_la = a1s_b_ij(zeta_x_dual, x0, la);
-        let a1s_b_lr = a1s_b_ij(zeta_x_dual, x0, lr);
-        let a1s_b_2la = a1s_b_ij(zeta_x_dual, x0, 2.0 * la);
-        let a1s_b_lalr = a1s_b_ij(zeta_x_dual, x0, la + lr);
-        let a1s_b_2lr = a1s_b_ij(zeta_x_dual, x0, 2.0 * lr);
+        let [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr] =
+            a1s_b_terms(zeta_x_dual, x0, la, lr);
         let a1_ii = pref * (a1s_b_la - a1s_b_lr);
         let a2_ii = pref * eps_k * c * k_hs_dual * 0.5 * (a1s_b_2la - a1s_b_lalr * 2.0 + a1s_b_2lr);
 
@@ -302,20 +294,37 @@ fn a1s_ij<D: DualNum<f64> + Copy>(zeta_x: D, lambda: f64) -> D {
     -(-zeta_eff * 0.5 + 1.0) / ((-zeta_eff + 1.0).powi(3) * (lambda - 3.0))
 }
 
-/// Eq. A 12 of Lafitte divided by 2 PI rho_s d_ij^3 epsilon_k_ij
+/// Eq. A 12 of Lafitte divided by 2 PI rho_s d_ij^3 epsilon_k_ij, with x0_l = x0^λ given
 #[inline]
-fn b_ij<D: DualNum<f64> + Copy>(zeta_x: D, x0: D, lambda: f64) -> D {
-    let x0_3ml = x0.powf(3.0 - lambda);
+fn b_ij<D: DualNum<f64> + Copy>(zeta_x: D, x0: D, x0_l: D, lambda: f64) -> D {
+    // x0^(3-λ) and x0^(4-λ) from x0^λ instead of two further powf calls
+    let x0_3ml = x0.powi(3) / x0_l;
     let i = -(x0_3ml - 1.0) / (lambda - 3.0);
-    let j = -(x0.powf(4.0 - lambda) * (lambda - 3.0) - x0_3ml * (lambda - 4.0) - 1.0)
+    let j = -(x0_3ml * x0 * (lambda - 3.0) - x0_3ml * (lambda - 4.0) - 1.0)
         / ((lambda - 3.0) * (lambda - 4.0));
     ((-zeta_x * 0.5 + 1.0) * i - zeta_x * (zeta_x + 1.0) * 4.5 * j) * (-zeta_x + 1.0).powi(-3)
 }
 
-/// Calculates x0^l (a1s_ij + b_ij) without prefactor C
+/// Calculates x0^l (a1s_ij + b_ij) without prefactor C, with x0_l = x0^λ given
 #[inline]
-fn a1s_b_ij<D: DualNum<f64> + Copy>(zeta_x: D, x0: D, lambda: f64) -> D {
-    x0.powf(lambda) * (a1s_ij(zeta_x, lambda) + b_ij(zeta_x, x0, lambda))
+fn a1s_b_ij<D: DualNum<f64> + Copy>(zeta_x: D, x0: D, x0_l: D, lambda: f64) -> D {
+    x0_l * (a1s_ij(zeta_x, lambda) + b_ij(zeta_x, x0, x0_l, lambda))
+}
+
+/// x0^λ (a1s + B) for the exponents λ^a, λ^r, 2λ^a, λ^a + λ^r and 2λ^r of a pair.
+///
+/// The only change to the kernels copied from `saftvrmie::eos::dispersion`: all powers of x0 are
+/// obtained from x0^λ^a and x0^λ^r (two `powf` per pair instead of fifteen); equal up to round-off.
+#[inline]
+fn a1s_b_terms<D: DualNum<f64> + Copy>(zeta_x: D, x0: D, la: f64, lr: f64) -> [D; 5] {
+    let (x0_la, x0_lr) = (x0.powf(la), x0.powf(lr));
+    [
+        a1s_b_ij(zeta_x, x0, x0_la, la),
+        a1s_b_ij(zeta_x, x0, x0_lr, lr),
+        a1s_b_ij(zeta_x, x0, x0_la * x0_la, 2.0 * la),
+        a1s_b_ij(zeta_x, x0, x0_la * x0_lr, la + lr),
+        a1s_b_ij(zeta_x, x0, x0_lr * x0_lr, 2.0 * lr),
+    ]
 }
 
 fn f(k: usize, alpha: f64) -> f64 {

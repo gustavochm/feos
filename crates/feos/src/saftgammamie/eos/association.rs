@@ -178,9 +178,9 @@ impl SaftGammaMiePars {
             .sum();
         let mut sigma_x3 = D::zero();
         for k in 0..n {
-            sigma_x3 += xs[k].powi(2) * self.sigma_kl[(k, k)].powi(3);
+            sigma_x3 += xs[k].powi(2) * self.sigma3_kl[(k, k)];
             for l in k + 1..n {
-                sigma_x3 += xs[k] * xs[l] * self.sigma_kl[(k, l)].powi(3) * 2.0;
+                sigma_x3 += xs[k] * xs[l] * self.sigma3_kl[(k, l)] * 2.0;
             }
         }
         segment_density * sigma_x3
@@ -216,13 +216,19 @@ impl AssociationStrength for SaftGammaMiePars {
             return delta;
         }
 
+        // the kernel depends only on the pair of molecules owning the sites
         let rho_sigma3 = self.reduced_density_sigma_x3(state);
+        let kernel = DMatrix::from_fn(self.m_i.len(), self.m_i.len(), |i, j| {
+            association_kernel(
+                rho_sigma3,
+                state.temperature / self.epsilon_k_bar_ij[(i, j)],
+            )
+        });
         for bp in association_parameters {
             let [a, b] = [bp.id1, bp.id2];
             let [k, l] = [sites1[a].assoc_comp, sites2[b].assoc_comp];
             let [i, j] = [self.component_index[k], self.component_index[l]];
-            let t_red = state.temperature / self.epsilon_k_bar_ij[(i, j)];
-            delta[(a, b)] = association_kernel(rho_sigma3, t_red)
+            delta[(a, b)] = kernel[(i, j)]
                 * self.association_strength_ij(state.temperature, k, l, &bp.model_record);
         }
         delta

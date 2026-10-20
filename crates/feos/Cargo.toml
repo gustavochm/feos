@@ -84,6 +84,11 @@ required-features = ["saftvrmie"]
 harness = false
 
 [[bench]]
+name = "saftgammamie"
+harness = false
+required-features = ["saftgammamie", "saftvrmie", "gc_pcsaft"]
+
+[[bench]]
 name = "contributions"
 harness = false
 required-features = ["pcsaft"]
