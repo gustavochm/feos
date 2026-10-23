@@ -4,6 +4,12 @@
 //! copied from `saftvrmie::eos::dispersion`, with the powers of x0 shared within a pair (see
 //! `a1s_b_terms`); sums run over the groups of all molecules (monomer) and over the molecular
 //! averages (chain), Haslam et al. (2020), Eq. 6-20.
+//!
+//! Intended change to the copied kernels: the temperature-only factors of the monomer pairs (d_kl³,
+//! x0^λ and the I_λ, J_λ of the B term) come from [TemperatureTerms], computed once per temperature,
+//! so x0^λ (a1s + B) = x0^λ a1s + x0^λ I_λ g_I(ζ_x) − x0^λ J_λ g_J(ζ_x). The copied kernels remain for
+//! dual numbers of higher order than three.
+use super::temperature::{Delta, TemperatureTerms};
 use crate::saftgammamie::parameters::SaftGammaMiePars;
 use feos_core::StateHD;
 use nalgebra::{DMatrix, DVector};
@@ -50,9 +56,14 @@ impl<D: DualNum<f64> + Copy + Zero> Properties<D> {
             .component_mul(&m)
             .sum();
 
-        // diameter
-        let d_kl = DMatrix::from_fn(n, n, |k, l| (diameter[k] + diameter[l]) * 0.5);
-        let d3_kl = d_kl.map(|d| d.powi(3));
+        // d_kl³ once per temperature (temperature.rs); directly for higher-order dual numbers
+        let d3_kl = if D::NDERIV <= 3 {
+            let terms = TemperatureTerms::get(parameters, state.temperature.re());
+            let delta = Delta::new(state.temperature);
+            DMatrix::from_fn(n, n, |k, l| delta.eval(&terms.pair(k, l).d3))
+        } else {
+            DMatrix::from_fn(n, n, |k, l| ((diameter[k] + diameter[l]) * 0.5).powi(3))
+        };
 
         // segment packing fraction
         let mut zeta_x = D::zero();
@@ -134,6 +145,37 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
     let mut a2 = D::zero();
     let mut a3 = D::zero();
 
+    // temperature-only pair factors once per temperature (temperature.rs); directly for
+    // higher-order dual numbers
+    let cached = (D::NDERIV <= 3).then(|| {
+        let terms = TemperatureTerms::get(p, state.temperature.re());
+        (terms, Delta::new(state.temperature))
+    });
+    // ζ_x factors of the B term: g_I = (1 − ζ/2)/(1 − ζ)³, g_J = 9ζ(1 + ζ)/(2(1 − ζ)³)
+    let frac_1mzeta3 = (-zeta_x + 1.0).powi(-3);
+    let g_i = (-zeta_x * 0.5 + 1.0) * frac_1mzeta3;
+    let g_j = zeta_x * (zeta_x + 1.0) * 4.5 * frac_1mzeta3;
+    // d_kl³ and x0^λ (a1s + B) of the five exponents of the pair (k, l)
+    let pair = |k: usize, l: usize, d_kl: D, sigma: f64, la: f64, lr: f64| -> (D, [D; 5]) {
+        match &cached {
+            Some((terms, delta)) => {
+                let t = terms.pair(k, l);
+                let lambdas = [la, lr, 2.0 * la, la + lr, 2.0 * lr];
+                // x0^λ B = x0^λ I_λ g_I − x0^λ J_λ g_J (Lafitte et al. (2013), Eq. A12), as b_ij
+                let a1s_b = std::array::from_fn(|m| {
+                    delta.eval(&t.x0_lambda[m]) * a1s_ij(zeta_x, lambdas[m])
+                        + delta.eval(&t.x0_lambda_i[m]) * g_i
+                        - delta.eval(&t.x0_lambda_j[m]) * g_j
+                });
+                (delta.eval(&t.d3), a1s_b)
+            }
+            None => (
+                d_kl.powi(3),
+                a1s_b_terms(zeta_x, d_kl.recip() * sigma, la, lr),
+            ),
+        }
+    };
+
     for i in 0..n {
         // parameters (like pair of group i, record values as in SAFT-VR Mie)
         let eps_k = p.epsilon_k[i];
@@ -143,11 +185,9 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
         let c = p.c_kl[(i, i)];
 
         let di = properties.diameter[i];
-        let d3 = di.powi(3);
-        let x0 = di.recip() * sig;
+        let (d3, [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr]) =
+            pair(i, i, di, sig, la, lr);
         let pref = properties.segment_density * d3 * eps_k * 2.0 * PI * c;
-        let [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr] =
-            a1s_b_terms(zeta_x, x0, la, lr);
         let a1_ii = pref * (a1s_b_la - a1s_b_lr);
         let a2_ii = pref * eps_k * c * k_hs * 0.5 * (a1s_b_2la - a1s_b_lalr * 2.0 + a1s_b_2lr);
 
@@ -175,11 +215,9 @@ pub fn helmholtz_energy_density_disp_chain<D: DualNum<f64> + Copy>(
             let c = p.c_kl[(i, j)];
 
             let dij = (di + properties.diameter[j]) * 0.5;
-            let d3 = dij.powi(3);
-            let x0 = dij.recip() * sig;
+            let (d3, [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr]) =
+                pair(i, j, dij, sig, la, lr);
             let pref = properties.segment_density * d3 * eps_k * 2.0 * PI * c;
-            let [a1s_b_la, a1s_b_lr, a1s_b_2la, a1s_b_lalr, a1s_b_2lr] =
-                a1s_b_terms(zeta_x, x0, la, lr);
             let a1_ij = pref * (a1s_b_la - a1s_b_lr);
             let a2_ij = pref * eps_k * c * k_hs * 0.5 * (a1s_b_2la - a1s_b_lalr * 2.0 + a1s_b_2lr);
 

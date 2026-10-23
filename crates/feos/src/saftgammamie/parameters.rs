@@ -1,3 +1,4 @@
+use super::eos::temperature::{Delta, TemperatureTerms};
 use crate::hard_sphere::{HardSphereProperties, MonomerShape};
 use feos_core::parameter::{
     AssociationParameters, BinaryParameters, BinarySegmentRecord, CombiningRule, GcParameters,
@@ -8,6 +9,10 @@ use num_dual::DualNum;
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Source of [SaftGammaMiePars::id]
+static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// 10-point Gauss-Legendre quadrature [position, weight]
 // copied from saftvrmie::parameters
@@ -138,6 +143,9 @@ pub type SaftGammaMieParameters<C> = GcParameters<
 /// [GcParameters::binary_segment_records] for every pair of different groups, within and between
 /// molecules; `parameters.binary` and `parameters.association`, which omit pairs within one molecule,
 /// are not used by this model.
+///
+/// The parameters are not changed after [SaftGammaMiePars::new]: their temperature-dependent terms are cached
+/// per instance (`eos::temperature`); [Subset](feos_core::Subset) builds new parameters.
 pub struct SaftGammaMiePars {
     /// Component (molecule) of each group
     pub component_index: DVector<usize>,
@@ -170,6 +178,8 @@ pub struct SaftGammaMiePars {
     /// Unlike molecular averages of the association kernel (Haslam et al. (2020), Eq. 26-27)
     pub sigma_bar_ij: DMatrix<f64>,
     pub epsilon_k_bar_ij: DMatrix<f64>,
+    /// Unique per instance, the key of the cached temperature terms
+    pub(crate) id: usize,
 }
 
 impl SaftGammaMiePars {
@@ -314,6 +324,7 @@ impl SaftGammaMiePars {
             alpha_bar,
             sigma_bar_ij,
             epsilon_k_bar_ij,
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         })
     }
 }
@@ -522,6 +533,12 @@ impl HardSphereProperties for SaftGammaMiePars {
     }
 
     fn hs_diameter<D: DualNum<f64> + Copy>(&self, temperature: D) -> DVector<D> {
+        // the quadrature once per temperature (eos::temperature); exact up to third derivatives
+        if D::NDERIV <= 3 {
+            let terms = TemperatureTerms::get(self, temperature.re());
+            let delta = Delta::new(temperature);
+            return DVector::from_fn(self.m.len(), |k, _| delta.eval(&terms.diameter[k]));
+        }
         let t_inv = temperature.recip();
         DVector::from_fn(self.m.len(), |k, _| self.hs_diameter_kk(k, t_inv))
     }

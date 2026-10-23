@@ -12,6 +12,7 @@ use std::f64::consts::FRAC_PI_6;
 
 pub(crate) mod association;
 pub(crate) mod dispersion_chain;
+pub(crate) mod temperature;
 use dispersion_chain::{Properties, helmholtz_energy_density_disp_chain};
 
 /// Customization options for the SAFT-γ Mie equation of state.
